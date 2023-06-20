@@ -1,0 +1,76 @@
+##################################################################################
+### Purpose : Create two network namespace(red-ns and blue-ns) and ping each other.
+###           Also check connectivity to the internet from each namespace.
+###
+### Author  : Subarno Saha
+### Date    : 19th June 2023
+### Version : 1.0
+#################################################################################
+#1. Creating two Network Namespace(red-ns and blue-ns)
+ip netns add red-ns
+ip netns add blue-ns
+
+#2. Creating vETH cable and connecting them
+ip link add veth-1 type veth peer name vpeer-red
+ip link add veth-2 type veth peer name vpeer-blue
+
+#3. Bring UP the cable
+ip link set veth-1 up
+ip link set veth-2 up
+
+#4. Add peers to NS
+ip link set vpeer-red netns red-ns
+ip link set vpeer-blue netns blue-ns
+
+#5. Creating loopback interface and setup peer to namespace
+
+ip netns exec red-ns ip link set lo up
+ip netns exec blue-ns ip link set lo up
+
+#6. Setup peer ns interface
+ip netns exec red-ns ip link set vpeer-red up
+ip netns exec blue-ns ip link set vpeer-blue up
+
+#7. Assign IP address to namespace
+ip netns exec red-ns ip addr add 10.10.0.10/16 dev vpeer-red
+ip netns exec blue-ns ip addr add 10.10.0.20/16 dev vpeer-blue
+
+#8. Setup bridge
+ip link add br0 type bridge
+ip link set br0 up
+
+#9. Assign veth pairs to bridge
+ip link set veth-1 master br0
+ip link set veth-2 master br0
+
+#10. Setup bridge IP
+ip addr add 10.10.0.1/16 dev br0
+
+#11. Setup default route to direct traffic to the bridge
+ip netns exec red-ns  ip route add default via 10.10.0.1
+ip netns exec blue-ns  ip route add default via 10.10.0.1
+
+#12. Allow traffic to go outside the Namespace (MASQUERADE)
+bash -c 'echo 1 > /proc/sys/net/ipv4/ip_forward'
+iptables -t nat -A POSTROUTING -s 10.10.0.1/16 ! -o br0 -j MASQUERADE
+
+echo ""
+# Check connectivity
+echo "Display network namespaces"
+ip netns
+
+echo ""
+echo " Namespace red-ns to 8.8.8.8"
+ip netns exec red-ns ping -c2 8.8.8.8
+
+echo ""
+echo " Namespace blue-ns to 8.8.8.8"
+ip netns exec blue-ns ping -c2 8.8.8.8
+
+echo ""
+echo "Namespace “red-ns” to blue-ns IP blue-ns”
+ip netns exec red-ns ping -c2 10.10.0.20
+
+echo ""
+echo "Namespace “blue-ns” to blue-ns IP red-ns”
+ip netns exec blue-ns ping -c2 10.10.0.10
